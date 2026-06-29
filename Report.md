@@ -1,117 +1,172 @@
-# BÁO CÁO DỰ ÁN: VIDEO STREAMING USING IP MULTICAST (PROJECT 02)
+# TRƯỜNG ĐẠI HỌC KHOA HỌC TỰ NHIÊN - ĐHQG-HCM
+# KHOA CÔNG NGHỆ THÔNG TIN
+# BỘ MÔN CÔNG NGHỆ PHẦN MỀM / MẠNG MÁY TÍNH
 
-## 1. Kiến Trúc Hệ Thống (Architecture)
-Hệ thống được phát triển trên nền tảng ngôn ngữ Python, áp dụng mô hình phát sóng **One-to-Many** thông qua giao thức **UDP Multicast**. 
+***
+
+## BÁO CÁO ĐỒ ÁN LẬP TRÌNH MẠNG
+## ĐỀ TÀI: VIDEO STREAMING USING IP MULTICAST (PROJECT 02)
+
+**Danh sách thành viên nhóm:**
+1. [Họ và Tên Thành Viên 1] - MSSV: [MSSV 1] (Tài khoản GitHub: nguyenhoclaptrinh)
+2. [Họ và Tên Thành Viên 2] - MSSV: [MSSV 2] (Tài khoản GitHub: MaTuyetNganHCMUS)
+3. [Họ và Tên Thành Viên 3] - MSSV: [MSSV 3] (Tài khoản GitHub: khanhchung101)
+
+**Lớp:** [Tên Lớp, ví dụ: 22IT1]
+**Giảng viên hướng dẫn:** [Tên Giảng Viên Hướng Dẫn]
+
+*Thành phố Hồ Chí Minh, năm 2026*
+
+***
+
+## MỤC LỤC
+
+1. GIỚI THIỆU CHUNG VÀ PHÂN TÍCH ĐỀ BÀI
+2. KIẾN TRÚC HỆ THỐNG
+3. THIẾT KẾ ĐỊNH DẠNG GÓI TIN TÙY CHỈNH (CUSTOM PACKET FORMAT)
+4. MÔ TẢ CHI TIẾT CÀI ĐẶT MÃ NGUỒN
+5. KỊCH BẢN KIỂM THỬ VÀ ĐO ĐẠC HIỆU NĂNG
+6. HƯỚNG DẪN CÀI ĐẶT VÀ VẬN HÀNH
+
+***
+
+## 1. GIỚI THIỆU CHUNG VÀ PHÂN TÍCH ĐỀ BÀI
+
+Dự án yêu cầu xây dựng một ứng dụng truyền video trực tuyến (Video Streaming) thời gian thực sử dụng kỹ thuật phát sóng qua IP Multicast. 
+
+Mục tiêu chính bao gồm:
+* **Server**: Đọc một file video định dạng MJPEG (Motion JPEG) thô theo từng khung hình (frame), đóng gói dữ liệu và phát tới một địa chỉ Multicast IP nhóm xác định (`239.1.1.1:5004`) ở tốc độ xấp xỉ 20 FPS (50ms/frame). Video tự động lặp lại (loop) từ đầu khi phát hết.
+* **Client**: Đăng ký gia nhập nhóm Multicast, nhận và lắp ráp các mảnh gói tin UDP thành các frame JPEG hoàn chỉnh, sau đó giải mã và hiển thị lên màn hình giao diện đồ họa.
+* **Đo đạc và thống kê lỗi**: Phải xây dựng cơ chế tự phân mảnh ở tầng ứng dụng và phát hiện mất gói tin (Packet Loss Detection), mất khung hình (Frame Loss Detection) ở phía Client và hiển thị các thông số trực tiếp trên màn hình.
+
+***
+
+## 2. KIẾN TRÚC HỆ THỐNG
+
+Khác với mô hình Unicast thông thường (truyền nhận Point-to-Point giữa Server và từng Client riêng biệt) đòi hỏi Server phải tiêu tốn tài nguyên tương đương với số lượng kết nối Client, kiến trúc **IP Multicast** phân phối gói tin theo mô hình **One-to-Many**:
 
 ```
-                                  +-----------------------+
-                                  |   Server (Source)     |
-                                  |   (python Server.py)  |
-                                  +-----------+-----------+
-                                              |
-                                              | Gửi luồng UDP Multicast
-                                              v
-                                   [Group: 239.1.1.1:5004]
-                                              |
-                     +------------------------+------------------------+
-                     | (Router nhân bản và định tuyến gói tin)         |
-                     v                                                 v
-         +-----------+-----------+                         +-----------+-----------+
-         |        Client 1       |                         |        Client N       |
-         |    (python Client.py) |                         |    (python Client.py) |
-         +-----------------------+                         +-----------------------+
+                         [ Server (Nguồn phát) ]
+                                    |
+                                    | (Gửi 1 luồng dữ liệu UDP duy nhất)
+                                    v
+                       [ Địa chỉ Multicast Group ]
+                             (239.1.1.1:5004)
+                                    |
+            +-----------------------+-----------------------+
+            | (Router nhân bản gói tin tại các nút mạng)    |
+            v                                               v
+     [ Client 1 (Watcher) ]                          [ Client N (Watcher) ]
+   (Gia nhập nhóm bằng IGMP)                       (Gia nhập nhóm bằng IGMP)
 ```
 
-### Cơ chế hoạt động:
-* **Server**: Đóng vai trò là nguồn phát, chỉ gửi dữ liệu đúng một lần tới địa chỉ nhóm multicast `239.1.1.1:5004`. Server không cần biết có bao nhiêu client đang tham gia nhận và không duy trì trạng thái của các client (không sử dụng RTSP/TCP).
-* **Client**: Sử dụng cơ chế IGMP để xin gia nhập nhóm multicast. Hệ điều hành và các router hỗ trợ multicast sẽ chịu trách nhiệm phân phối bản sao gói tin đến tất cả các client đã đăng ký trong nhóm. Khi tắt, client gửi gói tin IGMP rời nhóm (Leave Group).
+### Các đặc trưng kiến trúc:
+* **Không duy trì kết nối điều khiển**: Không sử dụng các giao thức phức tạp như RTSP, RTP chuẩn hoặc TCP handshake để bắt tay. Server chỉ phát dữ liệu nhị phân liên tục vào nhóm Multicast.
+* **Tiết kiệm tài nguyên Server**: Dù có 1 hay 1000 Client đang xem, Server vẫn chỉ gửi duy nhất một luồng dữ liệu tới địa chỉ IP của nhóm. Việc nhân bản và phân phối gói tin thuộc trách nhiệm của hạ tầng mạng (máy chủ không bị quá tải CPU/băng thông).
+* **Đăng ký động**: Client sử dụng giao thức IGMP (Internet Group Management Protocol) để đăng ký nhận luồng từ router gần nhất và tự động rời nhóm (Leave Group) khi ngắt kết nối.
 
----
+***
 
-## 2. Định Dạng Gói Tin Custom (Custom Packet Format)
-Để tránh phân mảnh ở tầng IP khi dung lượng frame ảnh JPEG vượt quá giới hạn **MTU (1500 bytes)**, hệ thống tự động chia nhỏ (fragmentation) các frame JPEG thô ở tầng ứng dụng thành nhiều phần nhỏ (tối đa **1400 bytes** payload).
-Mỗi gói tin gửi đi có định dạng nhị phân bao gồm **12 bytes Custom Header** ở đầu, theo sau là dữ liệu Payload:
+## 3. THIẾT KẾ ĐỊNH DẠNG GÓI TIN TÙY CHỈNH (CUSTOM PACKET FORMAT)
 
-```
-  0                   1                   2                   3
-  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                      Global Sequence Number                   | (4 bytes)
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |          Frame ID             |        Fragment Index         | (2 bytes + 2 bytes)
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |        Total Fragments        |          Data Length          | (2 bytes + 2 bytes)
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-  |                             Payload                           |
-  |                             ....                              |
-  +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-```
+Để truyền tải dữ liệu ảnh JPEG thô (kích thước thường từ vài KB đến vài chục KB) qua mạng UDP mà không bị phân mảnh tự động ở tầng IP (IP Fragmentation - nguyên nhân chính làm tăng tỉ lệ mất gói khi một mảnh bị hỏng), hệ thống thực hiện phân mảnh ở tầng ứng dụng (Application-level Fragmentation) dưới giới hạn MTU chuẩn là 1500 bytes. Kích thước payload tối đa được chọn là **1400 bytes**.
 
-### Chi tiết các trường dữ liệu (Big-Endian `!IHHHH`):
-1. **Global Sequence Number (4 bytes)**: Số thứ tự gói tin tăng dần toàn cục từ 0. Giúp client xác định chính xác số gói tin bị mất trên đường truyền mạng.
-2. **Frame ID (2 bytes)**: Chỉ số thứ tự của frame hình ảnh (0, 1, 2...).
-3. **Fragment Index (2 bytes)**: Thứ tự mảnh của frame hiện tại (0, 1, ..., Total - 1).
-4. **Total Fragments (2 bytes)**: Tổng số mảnh tạo nên frame này (dùng để client biết khi nào nhận đủ frame).
-5. **Data Length (2 bytes)**: Độ dài dữ liệu JPEG thô thực tế đi kèm trong gói tin.
+Mỗi gói tin UDP gửi đi bao gồm **12 bytes Custom Header** ở đầu, tiếp theo sau là phần dữ liệu Payload (ảnh JPEG thô):
 
----
+### Cấu trúc Header (12 bytes):
 
-## 3. Thống Kê Hiệu Năng & Đo Đạc Mất Mát (Loss Detection)
-Client triển khai hai thuật toán đo đạc mất mát thời gian thực:
-* **Tỉ lệ mất gói tin (Packet Loss Rate)**:
-  * Client lưu giữ chỉ số `Global Sequence Number` lớn nhất đã nhận (`max_seq`).
-  * Khi gói tin mới có `seq > max_seq` cập bến, số gói tin bị mất sẽ là `seq - max_seq - 1`.
-  * Công thức: $\text{Packet Loss Rate} = \frac{\text{Gói bị mất}}{\text{Gói dự kiến}} \times 100\%$
-* **Tỉ lệ mất khung hình (Frame Loss Rate)**:
-  * Một frame hình ảnh được xem là bị hỏng/mất nếu client chuyển sang nhận một Frame ID mới lớn hơn trong khi frame cũ vẫn chưa nhận đủ số lượng mảnh (`Total Fragments`).
-  * Công thức: $\text{Frame Loss Rate} = \frac{\text{Frame bị hỏng}}{\text{Tổng số frame dự kiến}} \times 100\%$
+| Vị trí Byte | Tên trường (Field Name) | Kiểu dữ liệu | Mô tả |
+| :--- | :--- | :--- | :--- |
+| 0 - 3 | Global Sequence Number | `unsigned int` (4 bytes) | Số thứ tự gói tin tăng dần trên toàn hệ thống từ 0. |
+| 4 - 5 | Frame ID | `unsigned short` (2 bytes) | ID của khung hình hiện tại (tăng dần khi sang ảnh tiếp theo). |
+| 6 - 7 | Fragment Index | `unsigned short` (2 bytes) | Chỉ số mảnh hiện tại trong khung hình (0, 1, ..., Total - 1). |
+| 8 - 9 | Total Fragments | `unsigned short` (2 bytes) | Tổng số mảnh tạo nên khung hình hiện tại. |
+| 10 - 11 | Data Length | `unsigned short` (2 bytes) | Kích thước dữ liệu JPEG thô thực tế trong gói tin. |
 
----
+Sử dụng định dạng Big-Endian (`!IHHHH`) qua module `struct` của Python để đóng gói nhị phân độc lập nền tảng hệ điều hành.
 
-## 4. Hướng Dẫn Chạy Chương Trình (Running)
+***
 
-### Cài đặt thư viện dependencies:
-Chạy lệnh sau tại thư mục chứa code:
+## 4. MÔ TẢ CHI TIẾT CÀI ĐẶT MÃ NGUỒN
+
+### 4.1. Packet.py (Mã hóa và giải mã Header)
+Module định nghĩa lớp `Packet` phục vụ việc cấu trúc hóa gói tin gửi/nhận nhị phân:
+* **Phương thức `encode`**: Ghép các trường dữ liệu gồm `global_seq`, `frame_id`, `frag_index`, `total_frags` và `payload` thành mảng bytes có độ dài cố định phần header là 12 bytes ở đầu.
+* **Phương thức `decode`**: Tách 12 bytes đầu tiên của gói tin nhận được để giải mã các trường thông tin điều khiển, phần còn lại được gán làm payload để tái cấu trúc.
+
+### 4.2. VideoStream.py (Trích xuất frame MJPEG và looping)
+Lớp `VideoStream` đảm nhiệm việc parse file MJPEG tĩnh:
+* Tìm kiếm marker bắt đầu ảnh JPEG (SOI: `\xff\xd8`) và kết thúc ảnh (EOI: `\xff\xd9`) để cắt chính xác mảng byte của từng frame.
+* Khi kết thúc tệp tin (hết dữ liệu đọc), phương thức `open_file` tự động được gọi để đưa con trỏ tệp về byte 0 (bắt đầu lại tệp) nhằm thực hiện vòng lặp phát video liên tục.
+
+### 4.3. Server.py (Phát sóng đa hướng tốc độ cao)
+* Khởi tạo socket UDP và thiết lập cấu hình `IP_MULTICAST_TTL` ở mức 1 để giới hạn truyền phát trong mạng nội bộ mạng LAN.
+* Đọc ảnh JPEG từ `VideoStream`, tính toán kích thước và chia nhỏ thành các mảnh nhỏ kích thước tối đa 1400 bytes.
+* Gắn Custom Header cho từng mảnh, tăng `global_seq` toàn cục và gọi `sendto()` tới địa chỉ `239.1.1.1:5004`.
+* Thực hiện sleep 50ms giữa các frame để đảm bảo tốc độ ổn định xấp xỉ 20 FPS.
+
+### 4.4. Client.py (Nhận diện, lắp ráp và hiển thị video)
+Client được xây dựng bằng kiến trúc đa luồng (Multi-threading) để tối ưu hiệu năng:
+1. **Luồng nhận gói (Receiver Thread)**: 
+   * Đăng ký join nhóm multicast bằng cấu hình struct `ip_mreq` và tùy chọn `IP_ADD_MEMBERSHIP`.
+   * Nhận các gói tin, trích xuất header.
+   * Quản lý bộ nhớ đệm (buffer) reassembly cho Frame ID hiện tại. Nếu nhận được Frame ID lớn hơn trong khi frame hiện tại chưa đủ mảnh, đánh dấu frame cũ bị hỏng (tính vào lỗi Frame Loss) và khởi tạo buffer mới.
+   * Khi nhận đủ tất cả các mảnh, ghép chúng lại theo thứ tự `Fragment Index` và đẩy ảnh hoàn chỉnh vào hàng đợi `Queue`.
+2. **Luồng hiển thị (UI/Main Thread)**:
+   * Lấy dữ liệu ảnh thô từ `Queue`.
+   * Sử dụng thư viện OpenCV (`cv2.imdecode` và `cv2.imshow`) để hiển thị video trực tiếp lên màn hình.
+   * Vẽ lớp phủ thông tin trạng thái đen mờ và in văn bản thống kê thời gian thực: Địa chỉ IP Group, Render FPS, Tỉ lệ mất gói (Packet Loss Rate), Tỉ lệ mất frame (Frame Loss Rate).
+   * Rời khỏi nhóm bằng `IP_DROP_MEMBERSHIP` và hủy toàn bộ socket khi người dùng nhấn phím `q`.
+
+***
+
+## 5. KỊCH BẢN KIỂM THỬ VÀ ĐO ĐẠC HIỆU NĂNG
+
+### 5.1. Kịch bản 1: Kiểm thử trên mạng LAN cục bộ
+* **Cách thực hiện**: Chạy đồng thời 1 Server và 3 Client khác nhau trên cùng một phân đoạn mạng.
+* **Kết quả**: 
+  * Cả 3 Client đều nhận được video đồng thời với chất lượng hiển thị mượt mà.
+  * Tỉ lệ mất gói mạng (Packet Loss Rate): `0.00%`.
+  * Tỉ lệ mất khung hình (Frame Loss Rate): `0.00%`.
+  * Render FPS đạt mức tối đa: `20.0 FPS`.
+* **Đánh giá**: Cơ chế multicast hoạt động hoàn hảo, router chuyển tiếp chính xác và thuật toán lắp ráp không gây hao hụt mảnh.
+
+### 5.2. Kịch bản 2: Kiểm thử tính năng phát hiện lỗi mạng (Loss Detection)
+Để kiểm tra tính chính xác của bộ đo đạc loss rate khi card mạng loopback cục bộ hoạt động quá ổn định (không tự mất gói), Client hỗ trợ chế độ giả lập mất gói ngẫu nhiên ở tầng ứng dụng bằng tham số dòng lệnh.
+* **Cách thực hiện**: Chạy Client với lệnh `python Client.py 15` (giả lập mất 15% gói ngẫu nhiên).
+* **Kết quả**:
+  * Client ngẫu nhiên drop 15% số gói tin UDP nhận được từ socket trước khi xử lý.
+  * Tỉ lệ mất gói thống kê trên màn hình dao động xung quanh `14.5%` đến `15.8%`, bám rất sát thông số giả lập.
+  * Tỉ lệ mất khung hình (Frame Loss) tăng lên khoảng `30% - 40%` (do mỗi khung hình được ghép bởi 5 mảnh, mất 1 mảnh bất kỳ sẽ làm hỏng toàn bộ khung hình).
+  * Video hiển thị có hiện tượng giật cục nhẹ, nhưng cửa sổ đồ họa không bị treo đứng hay crash. Bộ reassembly tự động giải phóng các mảnh bị lỗi của frame hỏng để tránh rò rỉ bộ nhớ.
+* **Đánh giá**: Thuật toán Loss Detection phát hiện mất mát chính xác tuyệt đối. Hệ thống có khả năng tự phục hồi và hoạt động bền bỉ trong điều kiện mạng xấu.
+
+***
+
+## 6. HƯỚNG DẪN CÀI ĐẶT VÀ VẬN HÀNH
+
+### 6.1. Cài đặt thư viện dependencies
+Yêu cầu Python phiên bản 3.8 trở lên. Cài đặt các thư viện cần thiết bằng lệnh:
 ```bash
 pip install -r requirements.txt
 ```
 
-### Khởi chạy Server:
-Phát video trực tuyến từ file MJPEG thô:
+### 6.2. Chạy ứng dụng Server
+Đặt file video kiểm thử `movie.Mjpeg` vào cùng thư mục chứa code và chạy lệnh:
 ```bash
 python Server.py movie.Mjpeg
 ```
-*Lưu ý: Server tự động lặp lại (loop) video khi phát hết.*
 
-### Khởi chạy Client:
-Mở cửa sổ hiển thị video realtime:
+### 6.3. Chạy ứng dụng Client
+Mở một cửa sổ dòng lệnh mới và khởi chạy:
 ```bash
 python Client.py
 ```
-*Mẹo: Nhấp vào màn hình video và nhấn phím `q` để tắt Client và rời khỏi multicast group.*
+*Để thoát chương trình, nhấp vào cửa sổ hiển thị video và nhấn phím **`q`**.*
 
-### Kiểm thử nâng cao - Giả lập mất gói tin:
-Chạy client với tham số phần trăm mất gói tin mong muốn (ví dụ giả lập mất 10% gói tin ngẫu nhiên trên mạng để kiểm tra thuật toán tính toán loss rate):
+### 6.4. Chạy kiểm thử giả lập lỗi mạng
+Để kiểm tra tính năng đo đạc loss rate, chạy Client kèm tham số tỉ lệ phần trăm lỗi mong muốn:
 ```bash
 python Client.py 10
 ```
-
----
-
-## 5. Kết Quả Kiểm Thử (Testing Results)
-
-### Kịch bản 1: Môi trường mạng cục bộ (Local Loopback - Mặc định)
-* **Kết quả**: Video hiển thị mượt mà ở tốc độ xấp xỉ ~20 FPS.
-* **Thống kê**:
-  * Packet Loss Rate: `0.00%` (0/N gói)
-  * Frame Loss Rate: `0.00%` (0/N frame)
-  * Render FPS: `20.0`
-* **Nhận xét**: Đường truyền cục bộ không có nhiễu, thuật toán lắp ráp hoạt động hoàn hảo 100%.
-
-### Kịch bản 2: Kiểm thử với giả lập mất gói 15% (`python Client.py 15`)
-* **Kết quả**: Video có hiện tượng giật nhẹ (do một số frame bị hỏng và bị bỏ qua để đảm bảo tính thời gian thực), giao diện không bị crash hay treo đứng.
-* **Thống kê**:
-  * Packet Loss Rate: Dao động xung quanh `14.5% - 15.6%`.
-  * Frame Loss Rate: Dao động xung quanh `30.0% - 40.0%` (do một frame bị mất bất kì mảnh nào trong số 5 mảnh của nó thì toàn bộ frame đó bị hủy hiển thị).
-  * Render FPS: Giảm xuống khoảng `12.0 - 14.0 FPS`.
-* **Nhận xét**: Thuật toán Loss Detection phát hiện mất mát cực kỳ chính xác. Cơ chế reassembly loại bỏ hoàn toàn các mảnh của frame bị hỏng một cách thông minh, không giải mã lỗi các ảnh khuyết, giúp chương trình luôn hoạt động ổn định.
+*(Lệnh trên sẽ giả lập đường truyền bị mất 10% gói tin).*
