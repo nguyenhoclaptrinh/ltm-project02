@@ -15,6 +15,7 @@ except AttributeError:
 MULTICAST_GRP = '239.1.1.1'
 MULTICAST_PORT = 5004
 MAX_PAYLOAD_SIZE = 1400  # Kích thước payload tối đa trong mỗi mảnh gói UDP để tránh IP fragmentation
+FRAME_ID_MODULO = 1 << 16
 
 def main():
     if len(sys.argv) < 2:
@@ -50,7 +51,7 @@ def main():
                 time.sleep(0.5)
                 continue
 
-            frame_id = video_stream.frameNbr()
+            frame_id = video_stream.frameNbr() % FRAME_ID_MODULO
             total_size = len(frame_data)
             
             # Chia nhỏ frame JPEG thành các mảnh (fragments)

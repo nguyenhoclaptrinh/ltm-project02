@@ -18,6 +18,8 @@ except AttributeError:
 
 MULTICAST_GRP = '239.1.1.1'
 MULTICAST_PORT = 5004
+FRAME_ID_MODULO = 1 << 16
+FRAME_WRAP_THRESHOLD = FRAME_ID_MODULO // 2
 
 class MulticastClient:
     def __init__(self, loss_sim_rate=0.0):
@@ -36,6 +38,8 @@ class MulticastClient:
         self.fragments_received = {}
         self.total_expected_fragments = 0
         self.min_frame_id = -1
+        self.last_raw_frame_id = -1
+        self.frame_id_wrap_count = 0
         self.total_lost_frames = 0
         self.total_expected_frames = 0
         self.frame_loss_rate = 0.0
@@ -61,6 +65,18 @@ class MulticastClient:
         except Exception as e:
             print(f"Lỗi khởi tạo socket client: {e}")
             sys.exit(1)
+
+    def expand_frame_id(self, raw_frame_id):
+        """Mở rộng Frame ID 2 byte thành bộ đếm tăng dần để xử lý wrap khi stream lâu."""
+        if self.last_raw_frame_id == -1:
+            self.last_raw_frame_id = raw_frame_id
+            return raw_frame_id
+
+        if raw_frame_id < self.last_raw_frame_id and (self.last_raw_frame_id - raw_frame_id) > FRAME_WRAP_THRESHOLD:
+            self.frame_id_wrap_count += 1
+
+        self.last_raw_frame_id = raw_frame_id
+        return raw_frame_id + self.frame_id_wrap_count * FRAME_ID_MODULO
 
     def receive_packets(self):
         """Thread liên tục nhận các gói tin nhị phân và lắp ráp frame."""
@@ -97,8 +113,8 @@ class MulticastClient:
                         self.packet_loss_rate = (self.packets_lost / self.packets_expected) * 100.0
 
                 # 2. Xử lý lắp ráp (Reassembly) & Thống kê Frame Loss
-                fid = packet.frame_id
-                
+                fid = self.expand_frame_id(packet.frame_id)
+
                 if self.min_frame_id == -1:
                     self.min_frame_id = fid
 
@@ -111,12 +127,12 @@ class MulticastClient:
                     if self.current_frame_id != -1:
                         if len(self.fragments_received) < self.total_expected_fragments:
                             self.total_lost_frames += 1
-                    
+
                     # Cập nhật thông tin frame mới
                     self.current_frame_id = fid
                     self.fragments_received = {packet.frag_index: packet.payload}
                     self.total_expected_fragments = packet.total_frags
-                    
+
                     # Cập nhật tổng số frame dự kiến nhận được từ đầu đến giờ
                     self.total_expected_frames = self.current_frame_id - self.min_frame_id + 1
                 else:
